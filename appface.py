@@ -1,69 +1,63 @@
 import streamlit as st
-import face_recognition
+from deepface import DeepFace
 from PIL import Image
-import numpy as np
 import pandas as pd
-import io
+import tempfile
+import os
+from datetime import datetime
 
-st.set_page_config(page_title="Facial Fraud Detection", layout="centered")
-st.title("🧠 Facial Identity Match Check")
+st.set_page_config(page_title="Facial Match Check", layout="centered")
+st.title("🔒 Facial Identity Check - Advai Demo")
 
-st.write("Upload two face images to check if they're the same person.")
+st.markdown("Upload a reference (official) photo and a selfie to verify identity.")
 
-log_file = "fraud_log.csv"
-if "log_df" not in st.session_state:
-    if not st.session_state.get("log_df_loaded", False) and not st.session_state.get("log_df_failed", False):
-        try:
-            st.session_state["log_df"] = pd.read_csv(log_file)
-        except:
-            st.session_state["log_df"] = pd.DataFrame(columns=["Image1", "Image2", "Match"])
-        st.session_state["log_df_loaded"] = True
+# Upload images
+ref_img = st.file_uploader("📷 Upload Reference Image", type=["jpg", "png", "jpeg"])
+selfie_img = st.file_uploader("🤳 Upload Selfie Image", type=["jpg", "png", "jpeg"])
 
-# Upload interface
-img1_file = st.file_uploader("Upload First Face", type=["jpg", "jpeg", "png"])
-img2_file = st.file_uploader("Upload Second Face", type=["jpg", "jpeg", "png"])
+log_mismatches = st.checkbox("Log Mismatches")
+show_confidence = st.checkbox("Show Spoof Confidence (experimental)")
 
-if img1_file and img2_file:
-    img1 = Image.open(img1_file)
-    img2 = Image.open(img2_file)
+if ref_img and selfie_img:
+    with tempfile.NamedTemporaryFile(delete=False) as ref_temp:
+        ref_path = ref_temp.name
+        ref_temp.write(ref_img.read())
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(img1, caption="Image 1", use_column_width=True)
-    with col2:
-        st.image(img2, caption="Image 2", use_column_width=True)
+    with tempfile.NamedTemporaryFile(delete=False) as selfie_temp:
+        selfie_path = selfie_temp.name
+        selfie_temp.write(selfie_img.read())
 
-    if st.button("🔍 Compare"):
-        try:
-            img1_np = face_recognition.load_image_file(io.BytesIO(img1_file.getvalue()))
-            img2_np = face_recognition.load_image_file(io.BytesIO(img2_file.getvalue()))
+    st.image([ref_path, selfie_path], caption=["Reference", "Selfie"], width=200)
 
-            encoding1 = face_recognition.face_encodings(img1_np)
-            encoding2 = face_recognition.face_encodings(img2_np)
+    try:
+        result = DeepFace.verify(ref_path, selfie_path, model_name='VGG-Face', enforce_detection=True)
 
-            if len(encoding1) == 0 or len(encoding2) == 0:
-                st.error("Couldn't detect a face in one of the images.")
-            else:
-                match = face_recognition.compare_faces([encoding1[0]], encoding2[0])[0]
-                distance = np.linalg.norm(encoding1[0] - encoding2[0])
+        if result["verified"]:
+            st.success("✅ Identity Match Confirmed")
+        else:
+            st.error("🚨 Identity Mismatch Detected")
+            if log_mismatches:
+                log_entry = {
+                    "timestamp": datetime.now().isoformat(),
+                    "match": False,
+                    "distance": result["distance"]
+                }
+                df = pd.DataFrame([log_entry])
+                if os.path.exists("mismatch_log.csv"):
+                    df_existing = pd.read_csv("mismatch_log.csv")
+                    df = pd.concat([df_existing, df], ignore_index=True)
+                df.to_csv("mismatch_log.csv", index=False)
+                st.info("📄 Mismatch attempt logged.")
 
-                st.success("✅ Match!" if match else "❌ Not a Match")
-                st.metric("Distance", round(distance, 3))
+        if show_confidence:
+            confidence_score = max(0, 1 - result["distance"])  # crude inverse of distance
+            st.metric("Confidence (lower = spoof risk)", f"{confidence_score:.2f}")
 
-                new_row = {"Image1": img1_file.name, "Image2": img2_file.name, "Match": match}
-                st.session_state["log_df"] = pd.concat(
-                    [st.session_state["log_df"], pd.DataFrame([new_row])], ignore_index=True
-                )
-                st.session_state["log_df"].to_csv(log_file, index=False)
+    except Exception as e:
+        st.warning(f"Could not process faces: {e}")
 
-        except Exception as e:
-            st.error(f"Something went wrong: {e}")
-
-# Logs in sidebar
-if st.sidebar.checkbox("📜 Show Match History"):
-    st.sidebar.dataframe(st.session_state["log_df"].tail(10))
-
-
+    
+               
     
               
 
