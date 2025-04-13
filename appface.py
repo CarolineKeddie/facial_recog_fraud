@@ -1,87 +1,73 @@
 import streamlit as st
-from deepface import DeepFace
-import tempfile
-import os
 import pandas as pd
+import cv2
+from deepface import DeepFace
+from PIL import Image
+import numpy as np
+import os
 from datetime import datetime
-import random
 
-st.set_page_config(page_title="Facial Recognition Fraud Demo", layout="centered")
-st.title("🧠 Facial Recognition Fraud Detection")
+# -----------------------
+# App Setup
+# -----------------------
 
-st.markdown("Simulate a facial recognition check at a bank. Can an imposter pass?")
-st.sidebar.header("🧪 Upload Photos for Comparison")
+st.title("Facial Recognition Identity Check")
+st.write("Upload two face images: one official photo (ID/passport) and one live/selfie attempt.")
 
-# Upload images
-img1 = st.sidebar.file_uploader("Upload Reference Face (On File)", type=["jpg", "jpeg", "png"])
-img2 = st.sidebar.file_uploader("Upload Input Face (Login Attempt)", type=["jpg", "jpeg", "png"])
+# Logging directory
+log_file = "fraud_attempts_log.csv"
+if not os.path.exists(log_file):
+    pd.DataFrame(columns=["timestamp", "match", "spoof_score"]).to_csv(log_file, index=False)
 
-# Optional: Spoof detection checkbox
-show_spoof = st.sidebar.checkbox("Show Spoof Confidence Bar")
-log_attempts = st.sidebar.checkbox("Log Fraud Attempts")
+# -----------------------
+# Image Upload
+# -----------------------
 
-# Handle comparison
-if img1 and img2:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(img1, caption="Reference Face", use_column_width=True)
-    with col2:
-        st.image(img2, caption="Input Face", use_column_width=True)
+uploaded_id = st.file_uploader("Upload official ID image", type=["jpg", "jpeg", "png"], key="id_img")
+uploaded_selfie = st.file_uploader("Upload live/selfie image", type=["jpg", "jpeg", "png"], key="selfie_img")
 
-    # Save images temporarily
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f1:
-        f1.write(img1.read())
-        img1_path = f1.name
+# -----------------------
+# Run Face Verification
+# -----------------------
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as f2:
-        f2.write(img2.read())
-        img2_path = f2.name
-
+if uploaded_id and uploaded_selfie:
     try:
-        st.subheader("🔍 Verification Result")
-        result = DeepFace.verify(img1_path, img2_path, model_name='VGG-Face', enforce_detection=False)
-        verified = result["verified"]
+        id_img = Image.open(uploaded_id).convert('RGB')
+        selfie_img = Image.open(uploaded_selfie).convert('RGB')
+
+        # Save temporarily
+        id_path = "temp_id.jpg"
+        selfie_path = "temp_selfie.jpg"
+        id_img.save(id_path)
+        selfie_img.save(selfie_path)
+
+        # Run DeepFace verification
+        result = DeepFace.verify(img1_path=id_path, img2_path=selfie_path, enforce_detection=False)
+
+        match = result["verified"]
         distance = result["distance"]
         threshold = result["threshold"]
 
-        st.metric("Distance", f"{distance:.2f}", delta=f"Threshold: {threshold:.2f}")
-        st.write(f"Match Result: **{verified}**")
+        st.subheader("Face Verification Result:")
+        st.write(f"Match: {'✅ Yes' if match else '❌ No'}")
+        st.write(f"Distance: {distance:.4f} (threshold: {threshold:.4f})")
 
-        if verified:
-            st.success("✅ Identity Verified - Access Granted")
-        else:
-            st.error("❌ Identity Mismatch - Fraud Detected")
+        # Spoof detection logic (simple version based on distance score)
+        spoof_score = 1 - min(distance / threshold, 1.0)
+        st.subheader("Spoof Detection Score")
+        st.progress(spoof_score)
 
-        # Spoof confidence bar (simulated for now)
-        if show_spoof:
-            st.subheader("🕵️‍♀️ Spoof Confidence")
-            spoof_score = random.uniform(0.1, 0.95)
-            st.progress(spoof_score)
-            if spoof_score > 0.7:
-                st.warning("⚠️ High Spoof Confidence - Possible Photo or Mask Attack")
-
-        # Log attempts if fraud
-        if log_attempts and not verified:
-            log = {
-                "timestamp": datetime.now().isoformat(),
-                "verified": verified,
-                "distance": distance,
-                "ref_file": img1.name,
-                "input_file": img2.name,
-            }
-            log_df = pd.DataFrame([log])
-            if os.path.exists("fraud_log.csv"):
-                log_df.to_csv("fraud_log.csv", mode="a", header=False, index=False)
-            else:
-                log_df.to_csv("fraud_log.csv", index=False)
-            st.info("🔒 Fraud attempt logged.")
+        # Log attempt
+        attempt_log = pd.DataFrame([{
+            "timestamp": datetime.utcnow().isoformat(),
+            "match": match,
+            "spoof_score": round(spoof_score, 4)
+        }])
+        attempt_log.to_csv(log_file, mode='a', header=False, index=False)
 
     except Exception as e:
-        st.error("Face detection failed. Try different images.")
-        st.exception(e)
+        st.error(f"Something went wrong: {e}")
 
-    # Clean up
-    os.remove(img1_path)
-    os.remove(img2_path)
-else:
-    st.info("Please upload two face images to begin.")
+       
+          
+           
